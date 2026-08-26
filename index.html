@@ -10,7 +10,7 @@ body{
   background:#15100a;background-image:radial-gradient(ellipse at 50% 0%,#2a1f12 0%,#15100a 70%);
   color:#e8dcc8;font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;
   display:flex;flex-direction:column;align-items:center;min-height:100vh;padding:12px;
-  touch-action:none;
+  touch-action:pan-y;   /* 手机允许竖向滚动到下方按钮；画布自身 touch-action:none 不受影响 */
 }
 h1{font-size:20px;font-weight:700;margin-bottom:2px;color:#f0e0c0;letter-spacing:3px}
 .hint{font-size:12px;color:#9a8870;margin-bottom:10px;text-align:center;line-height:1.5}
@@ -80,6 +80,16 @@ canvas{display:block;border-radius:6px;touch-action:none;box-shadow:0 2px 12px r
 .kcFooter{text-align:center;margin-top:18px}
 .kcClose{padding:10px 32px;border:2px solid #6B4A2B;border-radius:20px;background:#6B4A2B;color:#E8C887;font-size:14px;cursor:pointer;letter-spacing:3px}
 .kcClose:hover{background:#8B6B3D}
+/* ===== 小屏（手机）适配 ===== */
+@media (max-width:520px){
+  body{padding:8px 6px}
+  h1{font-size:17px;letter-spacing:2px}
+  .hint{font-size:11px;margin-bottom:6px;line-height:1.4}
+  .section{margin-bottom:6px}
+  .controls{gap:5px;margin-top:8px}
+  .btn{padding:8px 13px;font-size:13px}
+  .guide{font-size:10px}
+}
 </style>
 </head>
 <body>
@@ -944,6 +954,30 @@ function drawWork(){
     });
   }
 
+  // 触摸微调落点（放大镜拖动中）：橙色预览边 + 实时长度/角度读数
+  if(S.phase==='drawing'&&S.tpos){
+    var lv=S.vertices[S.vertices.length-1];
+    if(lv){
+      wctx.strokeStyle='rgba(255,190,80,0.95)';wctx.lineWidth=2;wctx.setLineDash([5,3]);
+      wctx.beginPath();wctx.moveTo(lv.x,lv.y);wctx.lineTo(S.tpos.x,S.tpos.y);wctx.stroke();
+      wctx.setLineDash([]);
+      var mm2=Math.hypot(S.tpos.x-lv.x,S.tpos.y-lv.y)/SCALE;
+      var ang2=Math.abs(Math.atan2(S.tpos.y-lv.y,S.tpos.x-lv.x)*180/Math.PI);if(ang2>90)ang2=180-ang2;
+      var lab2=mm2.toFixed(1)+'mm'+(ang2>2&&ang2<88?' ∠'+ang2.toFixed(0)+'°':'');
+      var mx2=(lv.x+S.tpos.x)/2,my2=(lv.y+S.tpos.y)/2;
+      wctx.font='bold 12px sans-serif';
+      var tw2=wctx.measureText(lab2).width;
+      wctx.fillStyle='rgba(20,14,6,0.85)';wctx.fillRect(mx2-tw2/2-5,my2-20,tw2+10,17);
+      wctx.fillStyle='#ffd27a';wctx.textAlign='center';wctx.textBaseline='middle';
+      wctx.fillText(lab2,mx2,my2-11.5);wctx.textBaseline='alphabetic';
+    }
+    wctx.strokeStyle='#ffb43c';wctx.lineWidth=2.5;
+    wctx.beginPath();wctx.arc(S.tpos.x,S.tpos.y,8,0,Math.PI*2);wctx.stroke();
+    wctx.beginPath();
+    wctx.moveTo(S.tpos.x-13,S.tpos.y);wctx.lineTo(S.tpos.x+13,S.tpos.y);
+    wctx.moveTo(S.tpos.x,S.tpos.y-13);wctx.lineTo(S.tpos.x,S.tpos.y+13);wctx.stroke();
+  }
+
   // 锯木/凿眼动画（从第一个角点沿轮廓推进）
   if(S.phase==='cutting'&&S.cutAnim){drawCutAnim()}
 
@@ -1467,6 +1501,93 @@ function getPosOn(cv,w,h,e){
 }
 function getPos(e){return getPosOn(wc,CW,CH,e)}
 
+// ===== 触摸放大镜精细定位（手机专用：按住出现放大镜，拖动微调，松手落点）=====
+var TOUCHADJ={on:false,pid:null,kind:null,cv:null};
+var LOUPE={el:null,ctx:null,LS:132,Z:2.6,on:false,pos:null,cvEl:null};
+function loupeInit(){
+  if(LOUPE.el)return;
+  var el=document.createElement('div');
+  el.style.cssText='position:fixed;z-index:200;width:'+LOUPE.LS+'px;height:'+LOUPE.LS+'px;border-radius:50%;border:2px solid #d4a843;box-shadow:0 4px 22px rgba(0,0,0,.7);overflow:hidden;display:none;pointer-events:none;background:#6a4a28';
+  var c=document.createElement('canvas');c.width=LOUPE.LS*2;c.height=LOUPE.LS*2;
+  c.style.cssText='width:100%;height:100%';
+  el.appendChild(c);document.body.appendChild(el);
+  LOUPE.el=el;LOUPE.ctx=c.getContext('2d');
+}
+function tPos(cv,e){return cv==='w'?getPos(e):getPosOn(mc,MW,MH,e)}
+function loupePlace(e){
+  var L=LOUPE.LS;
+  var x=e.clientX-L/2,y=e.clientY-L-56;
+  if(y<8)y=e.clientY+46;              // 贴近屏幕顶端时改放手指下方
+  x=Math.max(8,Math.min(window.innerWidth-L-8,x));
+  y=Math.max(8,Math.min(window.innerHeight-L-8,y));
+  LOUPE.el.style.left=x+'px';LOUPE.el.style.top=y+'px';
+}
+function loupeLabel(){
+  var p=LOUPE.pos,lab='';
+  if(TOUCHADJ.kind==='vert'){
+    var lv=S.vertices[S.vertices.length-1];
+    if(lv){
+      var mm=Math.hypot(p.x-lv.x,p.y-lv.y)/SCALE;
+      var ang=Math.abs(Math.atan2(p.y-lv.y,p.x-lv.x)*180/Math.PI);if(ang>90)ang=180-ang;
+      lab=mm.toFixed(1)+'mm'+(ang>2&&ang<88?' ∠'+ang.toFixed(0)+'°':'');
+    }else lab='起点 '+Math.round(p.x/SCALE)+','+Math.round(p.y/SCALE)+'mm';
+  }else lab=Math.round(p.x/SCALE)+','+Math.round(p.y/SCALE)+'mm';
+  return lab;
+}
+function loupeRender(){
+  if(!LOUPE.on||!LOUPE.el||!LOUPE.pos)return;
+  var g=LOUPE.ctx,L=LOUPE.LS,P=LOUPE.pos;
+  var view=L/LOUPE.Z;   // 放大镜内可见的画布坐标范围
+  g.clearRect(0,0,L*2,L*2);
+  g.save();
+  g.beginPath();g.arc(L,L,L-2,0,Math.PI*2);g.clip();
+  g.fillStyle='#6a4a28';g.fillRect(0,0,L*2,L*2);
+  try{g.drawImage(LOUPE.cvEl,(P.x-view/2)*dpr,(P.y-view/2)*dpr,view*dpr,view*dpr,0,0,L*2,L*2)}catch(e2){}
+  g.strokeStyle='rgba(255,90,60,0.9)';g.lineWidth=1.5;   // 十字准线
+  g.beginPath();g.moveTo(L-16,L);g.lineTo(L+16,L);g.moveTo(L,L-16);g.lineTo(L,L+16);g.stroke();
+  g.beginPath();g.arc(L,L,9,0,Math.PI*2);g.stroke();
+  var lab=loupeLabel();
+  g.font='bold 22px sans-serif';
+  var tw=g.measureText(lab).width;
+  g.fillStyle='rgba(15,10,4,0.82)';
+  g.fillRect(L-tw/2-10,L*2-38,tw+20,32);
+  g.fillStyle='#ffd27a';g.textAlign='center';g.textBaseline='middle';
+  g.fillText(lab,L,L*2-22);
+  g.restore();
+}
+function touchAdjustStart(e,cv,kind){
+  TOUCHADJ.on=true;TOUCHADJ.pid=e.pointerId;TOUCHADJ.kind=kind;TOUCHADJ.cv=cv;
+  var p=tPos(cv,e);LOUPE.pos=p;LOUPE.cvEl=cv==='w'?wc:mc;
+  if(kind==='measure')S.cursor=Object.assign({cv:cv},p);
+  else S.tpos=p;
+  loupeInit();
+  LOUPE.on=true;loupePlace(e);LOUPE.el.style.display='block';
+  if(kind==='measure'){drawMortise();drawWork()}else drawWork();
+  loupeRender();
+}
+window.addEventListener('pointermove',function(e){
+  if(!TOUCHADJ.on||e.pointerId!==TOUCHADJ.pid)return;
+  e.preventDefault();
+  var p=tPos(TOUCHADJ.cv,e);LOUPE.pos=p;
+  if(TOUCHADJ.kind==='measure'){S.cursor=Object.assign({cv:TOUCHADJ.cv},p);drawMortise();drawWork()}
+  else{S.tpos=p;drawWork()}
+  loupePlace(e);loupeRender();
+},{passive:false});
+function touchAdjustEnd(e,cancel){
+  if(!TOUCHADJ.on||e.pointerId!==TOUCHADJ.pid)return;
+  TOUCHADJ.on=false;LOUPE.on=false;
+  if(LOUPE.el)LOUPE.el.style.display='none';
+  var p=LOUPE.pos;
+  if(!cancel){
+    if(TOUCHADJ.kind==='vert'){S.vertices.push(p);snd('click');updButtons()}
+    else if(TOUCHADJ.kind==='measure')measureClick(TOUCHADJ.cv,p);
+  }
+  S.tpos=null;S.cursor=null;
+  drawMortise();drawWork();updateReadout();
+}
+window.addEventListener('pointerup',function(e){touchAdjustEnd(e,false)});
+window.addEventListener('pointercancel',function(e){touchAdjustEnd(e,true)});
+
 // 更新量尺读数面板
 function updateReadout(){
   var el=document.getElementById('readout');
@@ -1501,10 +1622,12 @@ function measureClick(cv,pos){
 }
 
 // 木料画布：量尺模式下画辅助量线，关闭量尺模式后画角点
+// 手机触摸：走放大镜微调流程（按住-拖动-松手落点），鼠标点击行为不变
 wc.addEventListener('pointerdown',function(e){
   e.preventDefault();
   if(!actx)try{actx=new(window.AudioContext||window.webkitAudioContext)()}catch(e2){}
   if(S.phase!=='drawing'||S.material===0)return;
+  if(e.pointerType==='touch'){touchAdjustStart(e,'w',S.mode==='measure'?'measure':'vert');return}
   var pos=getPos(e);
   if(S.mode==='measure'){measureClick('w',pos);return}
   S.vertices.push(pos);
@@ -1515,6 +1638,7 @@ wc.addEventListener('pointerdown',function(e){
 mc.addEventListener('pointerdown',function(e){
   e.preventDefault();
   if(!actx)try{actx=new(window.AudioContext||window.webkitAudioContext)()}catch(e2){}
+  if(e.pointerType==='touch'&&S.mode==='measure'){touchAdjustStart(e,'m','measure');return}
   if(S.mode==='measure')measureClick('m',getPosOn(mc,MW,MH,e));
 });
 
